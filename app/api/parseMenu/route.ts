@@ -1,5 +1,6 @@
 // app/api/parseMenu/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
+export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from "next/server"
 import { Together } from "together-ai"
 import { z } from "zod"

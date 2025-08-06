@@ -5,7 +5,7 @@ import { Together } from "together-ai"
 import { z } from "zod"
 import zodToJsonSchema from "zod-to-json-schema"
 
-// Configure Together (with optional Helicone observability)
+// Configure the Together client (with optional Helicone observability)
 const options: ConstructorParameters<typeof Together>[0] = {}
 if (process.env.HELICONE_API_KEY) {
   options.baseURL = "https://together.helicone.ai/v1"
@@ -26,11 +26,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 1️⃣ Parse the menu with vision LLM
+    // 1️⃣ Use the vision-capable model to parse the menu text
     const systemPrompt = `
 You are given an image of a menu. Your job is to convert each menu item
 into JSON of the form:
-  [{"name":"name","price":"price","description":"description"}, ...]
+  [{"name":"…","price":"…","description":"…"}, …]
 Only return raw JSON.
 `
     const visionOutput = await together.chat.completions.create({
@@ -39,7 +39,7 @@ Only return raw JSON.
         { role: "user", content: systemPrompt },
         {
           role: "user",
-          // @ts-expect-error: API not typed
+          // @ts-expect-error: image_url message type not typed in Together's defs
           content: [{ type: "image_url", image_url: { url: menuUrl } }],
         },
       ],
@@ -52,7 +52,7 @@ Only return raw JSON.
       )
     }
 
-    // 2️⃣ Schema‐extract into a strict JSON shape
+    // 2️⃣ Enforce a strict JSON schema on that raw output
     const menuSchema = z.array(
       z.object({
         name: z.string(),
@@ -67,7 +67,7 @@ Only return raw JSON.
         { role: "system", content: "Return only JSON matching the schema." },
         { role: "user", content: rawMenu },
       ],
-      // @ts-expect-error: not typed
+      // @ts-expect-error: response_format not typed in Together's defs
       response_format: { type: "json_object", schema: jsonSchema },
     })
     const content = extractOutput.choices?.[0]?.message?.content
@@ -79,7 +79,7 @@ Only return raw JSON.
     }
     const menuItems: any[] = JSON.parse(content)
 
-    // 3️⃣ Generate images in parallel
+    // 3️⃣ Generate images for each item in parallel
     const imagePromises = menuItems.map(async (item) => {
       const resp = await together.images.create({
         prompt: `Hyper-realistic photo of ${item.name}: ${item.description}`,
@@ -87,7 +87,7 @@ Only return raw JSON.
         width: 1024,
         height: 768,
         steps: 5,
-        // @ts-expect-error
+        // @ts-expect-error: response_format not typed in Together's defs
         response_format: "base64",
       })
       item.menuImage = resp.data[0]
@@ -95,7 +95,6 @@ Only return raw JSON.
     })
     await Promise.all(imagePromises)
 
-    // ✅ Return final JSON
     return NextResponse.json({ menu: menuItems })
   } catch (err) {
     console.error("API /parseMenu error:", err)

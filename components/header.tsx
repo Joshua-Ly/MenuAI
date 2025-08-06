@@ -27,7 +27,7 @@ export function Header() {
 
           {/* LinkedIn icon link */}
           <a
-            href="https://www.linkedin.com/in/your-profile"
+            href="https://www.linkedin.com/in/joshua-ly-82094b1b6/"
             target="_blank"
             rel="noopener noreferrer"
             className="text-white rounded border border-white transition-colors hover:bg-white hover:text-[#001f3f]"

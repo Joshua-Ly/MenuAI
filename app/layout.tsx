@@ -6,9 +6,9 @@ import { Inter } from "next/font/google";
 import PlausibleProvider from "next-plausible";
 
 const inter = Inter({ subsets: ["latin"] });
-const title = "PicMenu – Visualize your menu items with nice images";
-const description = "Visualize your menu items with nice images";
-const url = "https://www.picmenu.co/";
+const title = "MenuAI – Visualise your Menu items";
+const description = "Visualise your menu items with nice images";
+const url = "https://www.MenuAI.co/";
 const ogimage = "https://www.picmenu.co/og-image.png";
 const sitename = "picmenu.co";
 

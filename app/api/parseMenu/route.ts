@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { NextRequest, NextResponse } from "next/server"
 import { Together } from "together-ai";
 import { z } from "zod";
 import zodToJsonSchema from "zod-to-json-schema";
@@ -15,13 +16,13 @@ if (process.env.HELICONE_API_KEY) {
 
 const together = new Together(options);
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   const { menuUrl } = await request.json();
 
   console.log({ menuUrl });
 
   if (!menuUrl) {
-    return Response.json({ error: "No menu URL provided" }, { status: 400 });
+    return NextResponse.json({ error: "No menu URL provided" }, { status: 400 });
   }
 
   const systemPrompt = `You are given an image of a menu. Your job is to take each item in the menu and convert it into the following JSON format:
@@ -108,7 +109,7 @@ export async function POST(request: Request) {
   // Wait for all images to be generated
   await Promise.all(imagePromises);
 
-  return Response.json({ menu: menuItemsJSON });
+  return NextResponse.json({ menu: menuItemsJSON });
 }
 
 export const maxDuration = 60;

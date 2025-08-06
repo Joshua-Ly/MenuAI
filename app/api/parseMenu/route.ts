@@ -1,115 +1,107 @@
+// app/api/parseMenu/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server"
-import { Together } from "together-ai";
-import { z } from "zod";
-import zodToJsonSchema from "zod-to-json-schema";
+import { Together } from "together-ai"
+import { z } from "zod"
+import zodToJsonSchema from "zod-to-json-schema"
 
-// Add observability if a Helicone key is specified, otherwise skip
-const options: ConstructorParameters<typeof Together>[0] = {};
+// Configure Together (with optional Helicone observability)
+const options: ConstructorParameters<typeof Together>[0] = {}
 if (process.env.HELICONE_API_KEY) {
-  options.baseURL = "https://together.helicone.ai/v1";
+  options.baseURL = "https://together.helicone.ai/v1"
   options.defaultHeaders = {
     "Helicone-Auth": `Bearer ${process.env.HELICONE_API_KEY}`,
     "Helicone-Property-MENU": "true",
-  };
+  }
 }
-
-const together = new Together(options);
+const together = new Together(options)
 
 export async function POST(request: NextRequest) {
-  const { menuUrl } = await request.json();
+  try {
+    const { menuUrl } = await request.json()
+    if (!menuUrl) {
+      return NextResponse.json(
+        { error: "No menu URL provided" },
+        { status: 400 }
+      )
+    }
 
-  console.log({ menuUrl });
-
-  if (!menuUrl) {
-    return NextResponse.json({ error: "No menu URL provided" }, { status: 400 });
-  }
-
-  const systemPrompt = `You are given an image of a menu. Your job is to take each item in the menu and convert it into the following JSON format:
-
-[{"name": "name of menu item", "price": "price of the menu item", "description": "description of menu item"}, ...]
-
-  Please make sure to include all items in the menu and include a price (if it exists) & a description (if it exists). ALSO PLEASE ONLY RETURN JSON. IT'S VERY IMPORTANT FOR MY JOB THAT YOU ONLY RETURN JSON.
-  `;
-
-  const output = await together.chat.completions.create({
-    model: "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-    messages: [
-      {
-        role: "user",
-        // @ts-expect-error api is not typed
-        content: [
-          { type: "text", text: systemPrompt },
-          {
-            type: "image_url",
-            image_url: {
-              url: menuUrl,
-            },
-          },
-        ],
-      },
-    ],
-  });
-
-  const menuItems = output?.choices[0]?.message?.content;
-
-  // Defining the schema we want our data in
-  const menuSchema = z.array(
-    z.object({
-      name: z.string().describe("The name of the menu item"),
-      price: z.string().describe("The price of the menu item"),
-      description: z
-        .string()
-        .describe(
-          "The description of the menu item. If this doesn't exist, please write a short one sentence description."
-        ),
+    // 1️⃣ Parse the menu with vision LLM
+    const systemPrompt = `
+You are given an image of a menu. Your job is to convert each menu item
+into JSON of the form:
+  [{"name":"name","price":"price","description":"description"}, ...]
+Only return raw JSON.
+`
+    const visionOutput = await together.chat.completions.create({
+      model: "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
+      messages: [
+        { role: "user", content: systemPrompt },
+        {
+          role: "user",
+          // @ts-expect-error: API not typed
+          content: [{ type: "image_url", image_url: { url: menuUrl } }],
+        },
+      ],
     })
-  );
-  const jsonSchema = zodToJsonSchema(menuSchema, "menuSchema");
+    const rawMenu = visionOutput.choices?.[0]?.message?.content
+    if (!rawMenu) {
+      return NextResponse.json(
+        { error: "Failed to parse menu text" },
+        { status: 500 }
+      )
+    }
 
-  const extract = await together.chat.completions.create({
-    messages: [
-      {
-        role: "system",
-        content:
-          "The following is a list of items from a menu. Only answer in JSON.",
-      },
-      {
-        role: "user",
-        content: menuItems!,
-      },
-    ],
-    model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
-    // @ts-expect-error - this is not typed in the API
-    response_format: { type: "json_object", schema: jsonSchema },
-  });
+    // 2️⃣ Schema‐extract into a strict JSON shape
+    const menuSchema = z.array(
+      z.object({
+        name: z.string(),
+        price: z.string(),
+        description: z.string(),
+      })
+    )
+    const jsonSchema = zodToJsonSchema(menuSchema, "MenuSchema")
+    const extractOutput = await together.chat.completions.create({
+      model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      messages: [
+        { role: "system", content: "Return only JSON matching the schema." },
+        { role: "user", content: rawMenu },
+      ],
+      // @ts-expect-error: not typed
+      response_format: { type: "json_object", schema: jsonSchema },
+    })
+    const content = extractOutput.choices?.[0]?.message?.content
+    if (!content) {
+      return NextResponse.json(
+        { error: "Schema extraction failed" },
+        { status: 500 }
+      )
+    }
+    const menuItems: any[] = JSON.parse(content)
 
-  let menuItemsJSON;
-  if (extract?.choices?.[0]?.message?.content) {
-    menuItemsJSON = JSON.parse(extract?.choices?.[0]?.message?.content);
-    console.log({ menuItemsJSON });
+    // 3️⃣ Generate images in parallel
+    const imagePromises = menuItems.map(async (item) => {
+      const resp = await together.images.create({
+        prompt: `Hyper-realistic photo of ${item.name}: ${item.description}`,
+        model: "black-forest-labs/FLUX.1-schnell",
+        width: 1024,
+        height: 768,
+        steps: 5,
+        // @ts-expect-error
+        response_format: "base64",
+      })
+      item.menuImage = resp.data[0]
+      return item
+    })
+    await Promise.all(imagePromises)
+
+    // ✅ Return final JSON
+    return NextResponse.json({ menu: menuItems })
+  } catch (err) {
+    console.error("API /parseMenu error:", err)
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 }
+    )
   }
-
-  // Create an array of promises for parallel image generation
-  const imagePromises = menuItemsJSON.map(async (item: any) => {
-    console.log("processing image for:", item.name);
-    const response = await together.images.create({
-      prompt: `A picture of food for a menu, hyper realistic, highly detailed, ${item.name}, ${item.description}.`,
-      model: "black-forest-labs/FLUX.1-schnell",
-      width: 1024,
-      height: 768,
-      steps: 5,
-      // @ts-expect-error - this is not typed in the API
-      response_format: "base64",
-    });
-    item.menuImage = response.data[0];
-    return item;
-  });
-
-  // Wait for all images to be generated
-  await Promise.all(imagePromises);
-
-  return NextResponse.json({ menu: menuItemsJSON });
 }
-
-export const maxDuration = 60;
